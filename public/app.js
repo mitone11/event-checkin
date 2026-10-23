@@ -5,6 +5,7 @@ let selectedCI = null;
 let selectedInvitante = null;
 let currentPostazione = null;
 let isAuthenticated = false;
+let currentRole = null;
 
 
 async function loadData() {
@@ -321,20 +322,54 @@ async function undoCheckin(ci) {
   }
 }
 
-function openPostazioneModal() {
+async function openPostazioneModal() {
+  if (!isAuthenticated) return;
   document.getElementById('postazione-modal').classList.add('show');
-  if (currentPostazione) document.getElementById('postazione-select').value = currentPostazione;
+  await loadStationChoices();
 }
 function closePostazioneModal() {
   document.getElementById('postazione-modal').classList.remove('show');
 }
-function confirmPostazione() {
-  currentPostazione = document.getElementById('postazione-select').value;
-  document.getElementById('postazione-label').textContent = currentPostazione;
-  closePostazioneModal();
-  if (selectedCI) renderDetail(selectedCI);
-  if (selectedInvitante) renderInvitanteDetail(selectedInvitante);
-  renderList();
+async function loadStationChoices() {
+  const select = document.getElementById('postazione-select');
+  const confirmButton = document.getElementById('station-confirm');
+  try {
+    const response = await fetch(API + '/api/stations');
+    if (!response.ok) return;
+    const data = await response.json();
+    currentPostazione = data.current;
+    document.getElementById('postazione-label').textContent = currentPostazione || 'Seleziona postazione';
+    select.innerHTML = data.stations.map(item =>
+      `<option value="${escapeHtml(item.name)}" ${item.busy ? 'disabled' : ''}>${escapeHtml(item.name)}${item.busy ? ' — già in uso' : ''}</option>`
+    ).join('');
+    if (currentPostazione) select.value = currentPostazione;
+    else select.selectedIndex = data.stations.findIndex(item => !item.busy);
+    confirmButton.disabled = !select.value;
+  } catch {
+    showToast('Impossibile caricare le postazioni', 'error');
+  }
+}
+async function confirmPostazione() {
+  const station = document.getElementById('postazione-select').value;
+  if (!station) return;
+  const button = document.getElementById('station-confirm');
+  button.disabled = true;
+  try {
+    const response = await fetch(API + '/api/stations/' + encodeURIComponent(station) + '/claim', { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Impossibile riservare la postazione');
+    currentPostazione = data.station;
+    document.getElementById('postazione-label').textContent = currentPostazione;
+    closePostazioneModal();
+    if (selectedCI) renderDetail(selectedCI);
+    if (selectedInvitante) renderInvitanteDetail(selectedInvitante);
+    renderList();
+  } catch (error) {
+    showToast(escapeHtml(error.message), 'error');
+    await loadStationChoices();
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function showToast(msg, type) {
@@ -393,8 +428,9 @@ async function tryLogin() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Accesso non riuscito');
     errorEl.textContent = '';
-    setAuthenticated(true);
+    setAuthenticated(true, data.role, null);
     loadData();
+    if (data.role === 'station') openPostazioneModal();
   } catch (error) {
     errorEl.textContent = error.message === 'Failed to fetch' ? 'Errore di connessione al server.' : 'Password errata. Riprova.';
     input.value = '';
@@ -406,11 +442,15 @@ async function tryLogin() {
   }
 }
 
-function setAuthenticated(authenticated) {
+function setAuthenticated(authenticated, role = null, station = null) {
   isAuthenticated = authenticated;
+  currentRole = authenticated ? role : null;
+  if (authenticated) currentPostazione = station;
+  else currentPostazione = null;
   document.getElementById('login-overlay').classList.toggle('hidden', authenticated);
-  document.getElementById('admin-open-btn').hidden = !authenticated;
+  document.getElementById('admin-open-btn').hidden = !authenticated || currentRole !== 'admin';
   document.getElementById('logout-btn').hidden = !authenticated;
+  document.getElementById('postazione-label').textContent = currentPostazione || 'Seleziona postazione';
   if (!authenticated) closeAdminPanel();
 }
 
@@ -418,8 +458,11 @@ async function checkAuth() {
   try {
     const response = await fetch(API + '/api/auth/session', { cache: 'no-store' });
     const data = await response.json();
-    setAuthenticated(data.authenticated === true);
-    if (isAuthenticated) loadData();
+    setAuthenticated(data.authenticated === true, data.role, data.station);
+    if (isAuthenticated) {
+      loadData();
+      if (currentRole === 'station' && !currentPostazione) openPostazioneModal();
+    }
   } catch {
     setAuthenticated(false);
   }
@@ -428,6 +471,22 @@ async function checkAuth() {
 async function logout() {
   await fetch(API + '/api/auth/logout', { method: 'POST' }).catch(() => {});
   setAuthenticated(false);
+}
+
+async function renewStationLock() {
+  if (!isAuthenticated || !currentPostazione) return;
+  try {
+    const response = await fetch(API + '/api/stations/heartbeat', { method: 'POST' });
+    if (!response.ok) {
+      currentPostazione = null;
+      document.getElementById('postazione-label').textContent = 'Seleziona postazione';
+      showToast('La postazione è stata liberata. Selezionala di nuovo.', 'error');
+      if (currentRole === 'station') openPostazioneModal();
+      loadData();
+    }
+  } catch {
+    // Il lease scade da solo se il server resta irraggiungibile.
+  }
 }
 
 function escapeHtml(value) {
@@ -528,4 +587,5 @@ document.addEventListener('keydown', event => {
 });
 
 setInterval(() => { if (isAuthenticated) loadData(); }, 10000);
+setInterval(renewStationLock, 20000);
 checkAuth();

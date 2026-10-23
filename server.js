@@ -16,13 +16,17 @@ const DATABASE_PATH = path.join(DATA_DIR, 'checkin.sqlite');
 const CSV_PATH = path.join(__dirname, 'invitati.csv');
 const LEGACY_CHECKINS_PATH = path.join(__dirname, 'checkins.json');
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const STATION_PASSWORD = process.env.STATION_PASSWORD || '';
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const SESSION_COOKIE = 'event_admin_session';
 const SESSION_DURATION_SECONDS = 8 * 60 * 60;
+const STATION_LOCK_SECONDS = 90;
+const STATIONS = ['Postazione 1', 'Postazione 2', 'Postazione 3', 'Postazione 4'];
 
-if (!ADMIN_PASSWORD) {
-  throw new Error('Imposta la variabile d’ambiente ADMIN_PASSWORD prima di avviare il server.');
+if (!ADMIN_PASSWORD || !STATION_PASSWORD) {
+  throw new Error('Imposta le variabili d’ambiente ADMIN_PASSWORD e STATION_PASSWORD prima di avviare il server.');
 }
+if (ADMIN_PASSWORD === STATION_PASSWORD) throw new Error('ADMIN_PASSWORD e STATION_PASSWORD devono essere diverse.');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new DatabaseSync(DATABASE_PATH, { timeout: 5000 });
@@ -42,6 +46,11 @@ db.exec(`
     nome TEXT NOT NULL DEFAULT '',
     cognome TEXT NOT NULL DEFAULT '',
     numero_tavolo TEXT NOT NULL DEFAULT ''
+  );
+  CREATE TABLE IF NOT EXISTS station_locks (
+    station TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL UNIQUE,
+    expires_at INTEGER NOT NULL
   );
 `);
 
@@ -109,62 +118,145 @@ function migrateLegacyData() {
 
 migrateLegacyData();
 
-function createSessionToken() {
-  const payload = `${Math.floor(Date.now() / 1000) + SESSION_DURATION_SECONDS}.${crypto.randomBytes(24).toString('base64url')}`;
+function createSessionToken(role) {
+  const session = {
+    expiresAt: Math.floor(Date.now() / 1000) + SESSION_DURATION_SECONDS,
+    sessionId: crypto.randomUUID(),
+    role
+  };
+  const payload = Buffer.from(JSON.stringify(session)).toString('base64url');
   const signature = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
   return `${payload}.${signature}`;
 }
 
-function hasValidSession(req) {
+function getSession(req) {
   const cookieHeader = req.headers.cookie || '';
   const cookie = cookieHeader.split(';').map(part => part.trim()).find(part => part.startsWith(`${SESSION_COOKIE}=`));
-  if (!cookie) return false;
+  if (!cookie) return null;
   const token = cookie.slice(SESSION_COOKIE.length + 1);
-  const [expiresAt, nonce, signature, extra] = token.split('.');
-  if (!expiresAt || !nonce || !signature || extra !== undefined || Number(expiresAt) <= Math.floor(Date.now() / 1000)) return false;
-  const payload = `${expiresAt}.${nonce}`;
+  const [payload, signature, extra] = token.split('.');
+  if (!payload || !signature || extra !== undefined) return null;
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest();
   let supplied;
   try {
     supplied = Buffer.from(signature, 'base64url');
   } catch {
-    return false;
+    return null;
   }
-  return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return null;
+  try {
+    const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!session.sessionId || !['admin', 'station'].includes(session.role) || session.expiresAt <= Math.floor(Date.now() / 1000)) return null;
+    return session;
+  } catch {
+    return null;
+  }
+}
+
+function requireAuthenticated(req, res, next) {
+  const session = getSession(req);
+  if (!session) return res.status(401).json({ error: 'Accesso richiesto' });
+  req.session = session;
+  next();
 }
 
 function requireAdmin(req, res, next) {
-  if (!hasValidSession(req)) return res.status(401).json({ error: 'Accesso richiesto' });
+  if (req.session?.role !== 'admin') return res.status(403).json({ error: 'Funzione riservata all’amministratore' });
   next();
+}
+
+function releaseStation(sessionId) {
+  db.prepare('DELETE FROM station_locks WHERE session_id = ?').run(sessionId);
 }
 
 app.get('/api/auth/session', (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json({ authenticated: hasValidSession(req) });
+  const session = getSession(req);
+  const station = session
+    ? db.prepare('SELECT station FROM station_locks WHERE session_id = ? AND expires_at > ?').get(session.sessionId, Math.floor(Date.now() / 1000))?.station || null
+    : null;
+  res.json({ authenticated: !!session, role: session?.role || null, station });
 });
 
 app.post('/api/auth/login', (req, res) => {
   const suppliedPassword = typeof req.body.password === 'string' ? req.body.password : '';
-  const expectedHash = crypto.createHash('sha256').update(ADMIN_PASSWORD).digest();
   const suppliedHash = crypto.createHash('sha256').update(suppliedPassword).digest();
-  if (!crypto.timingSafeEqual(suppliedHash, expectedHash)) {
+  const adminHash = crypto.createHash('sha256').update(ADMIN_PASSWORD).digest();
+  const stationHash = crypto.createHash('sha256').update(STATION_PASSWORD).digest();
+  const isAdmin = crypto.timingSafeEqual(suppliedHash, adminHash);
+  const isStation = crypto.timingSafeEqual(suppliedHash, stationHash);
+  if (!isAdmin && !isStation) {
     return res.status(401).json({ error: 'Password non corretta' });
   }
 
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
   res.set('Cache-Control', 'no-store');
-  res.set('Set-Cookie', `${SESSION_COOKIE}=${createSessionToken()}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_DURATION_SECONDS}${secure}`);
-  res.json({ authenticated: true });
+  const role = isAdmin ? 'admin' : 'station';
+  res.set('Set-Cookie', `${SESSION_COOKIE}=${createSessionToken(role)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_DURATION_SECONDS}${secure}`);
+  res.json({ authenticated: true, role });
 });
 
 app.post('/api/auth/logout', (req, res) => {
+  const session = getSession(req);
+  if (session) releaseStation(session.sessionId);
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
   res.set('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}`);
   res.json({ success: true });
 });
 
-// Tutte le API dell'app richiedono una sessione admin valida.
-app.use('/api', requireAdmin);
+// Le API applicative richiedono una sessione valida; le scritture admin hanno un controllo ruolo dedicato.
+app.use('/api', requireAuthenticated);
+
+app.get('/api/stations', (req, res) => {
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare('DELETE FROM station_locks WHERE expires_at <= ?').run(now);
+  const locks = db.prepare('SELECT station, session_id FROM station_locks').all();
+  const owned = locks.find(lock => lock.session_id === req.session.sessionId)?.station || null;
+  res.json({
+    current: owned,
+    stations: STATIONS.map(station => ({
+      name: station,
+      busy: locks.some(lock => lock.station === station && lock.session_id !== req.session.sessionId),
+      selected: owned === station
+    }))
+  });
+});
+
+app.post('/api/stations/:station/claim', (req, res) => {
+  const station = req.params.station;
+  if (!STATIONS.includes(station)) return res.status(400).json({ error: 'Postazione non valida' });
+  const now = Math.floor(Date.now() / 1000);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare('DELETE FROM station_locks WHERE expires_at <= ?').run(now);
+    const occupied = db.prepare('SELECT session_id FROM station_locks WHERE station = ?').get(station);
+    if (occupied && occupied.session_id !== req.session.sessionId) {
+      db.exec('ROLLBACK');
+      return res.status(409).json({ error: 'Questa postazione è già in uso. Selezionane un’altra.' });
+    }
+    db.prepare('DELETE FROM station_locks WHERE session_id = ?').run(req.session.sessionId);
+    db.prepare('INSERT INTO station_locks (station, session_id, expires_at) VALUES (?, ?, ?)')
+      .run(station, req.session.sessionId, now + STATION_LOCK_SECONDS);
+    db.exec('COMMIT');
+    res.json({ success: true, station, expiresIn: STATION_LOCK_SECONDS });
+  } catch (error) {
+    if (db.isTransaction) db.exec('ROLLBACK');
+    throw error;
+  }
+});
+
+app.post('/api/stations/heartbeat', (req, res) => {
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.prepare('UPDATE station_locks SET expires_at = ? WHERE session_id = ?')
+    .run(now + STATION_LOCK_SECONDS, req.session.sessionId);
+  if (!result.changes) return res.status(409).json({ error: 'La postazione non è più riservata a questa sessione.' });
+  res.json({ success: true, expiresIn: STATION_LOCK_SECONDS });
+});
+
+app.delete('/api/stations/claim', (req, res) => {
+  releaseStation(req.session.sessionId);
+  res.json({ success: true });
+});
 
 function getGuests() {
   return db.prepare(`
@@ -194,10 +286,19 @@ app.get('/api/guests', (req, res) => {
 });
 
 app.post('/api/checkin', (req, res) => {
-  const { codice_carta_identita, postazione } = req.body;
+  const { codice_carta_identita } = req.body;
+  const stationLock = req.session.role === 'station'
+    ? db.prepare('SELECT station FROM station_locks WHERE session_id = ? AND expires_at > ?')
+      .get(req.session.sessionId, Math.floor(Date.now() / 1000))
+    : null;
+  if (req.session.role === 'station' && !stationLock) {
+    return res.status(409).json({ error: 'Seleziona una postazione disponibile prima di registrare gli ingressi.' });
+  }
+  const postazione = req.session.role === 'station' ? stationLock?.station : req.body.postazione;
   if (!codice_carta_identita || !postazione) {
     return res.status(400).json({ error: 'Dati mancanti' });
   }
+  if (!STATIONS.includes(postazione)) return res.status(400).json({ error: 'Postazione non valida' });
 
   const guest = db.prepare('SELECT * FROM guests WHERE codice_carta_identita = ?').get(codice_carta_identita);
   if (!guest) return res.status(404).json({ error: 'Invitato non trovato' });
@@ -225,14 +326,14 @@ app.delete('/api/checkin/:codice', (req, res) => {
 app.get('/api/stats', (req, res) => {
   const total = db.prepare('SELECT COUNT(*) AS count FROM guests').get().count;
   const entered = db.prepare('SELECT COUNT(*) AS count FROM checkins').get().count;
-  const byPostazione = { 'Postazione 1': 0, 'Postazione 2': 0, 'Postazione 3': 0 };
+  const byPostazione = Object.fromEntries(STATIONS.map(station => [station, 0]));
   for (const row of db.prepare('SELECT postazione, COUNT(*) AS count FROM checkins GROUP BY postazione').all()) {
     if (byPostazione[row.postazione] !== undefined) byPostazione[row.postazione] = row.count;
   }
   res.json({ total, entered, pending: total - entered, byPostazione });
 });
 
-app.post('/api/admin/guests', (req, res) => {
+app.post('/api/admin/guests', requireAdmin, (req, res) => {
   const guest = {
     nome: typeof req.body.nome === 'string' ? req.body.nome.trim() : '',
     cognome: typeof req.body.cognome === 'string' ? req.body.cognome.trim() : '',
@@ -252,7 +353,7 @@ app.post('/api/admin/guests', (req, res) => {
   res.status(201).json({ success: true, guest: { ...guest, checkin: null } });
 });
 
-app.delete('/api/admin/guests/:codice', (req, res) => {
+app.delete('/api/admin/guests/:codice', requireAdmin, (req, res) => {
   const result = db.prepare('DELETE FROM guests WHERE codice_carta_identita = ?').run(req.params.codice);
   if (!result.changes) return res.status(404).json({ error: 'Invitato non trovato' });
   res.json({ success: true });

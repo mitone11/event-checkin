@@ -14,7 +14,7 @@
   <div class="login-box">
     <div class="login-icon">🔐</div>
     <h2>MAK P100 Check-In</h2>
-    <p>Inserisci la password per accedere</p>
+    <p>Accedi come amministratore o come postazione</p>
     <input type="password" id="login-input" placeholder="Password" onkeydown="if(event.key==='Enter') tryLogin()" autocomplete="current-password" autofocus>
     <div class="login-error" id="login-error"></div>
     <button class="btn btn-checkin" onclick="tryLogin()">Accedi</button>
@@ -81,14 +81,10 @@
   <div class="modal">
     <h3>Seleziona postazione</h3>
     <select id="postazione-select">
-        <option value="Postazione 1">Postazione 1</option>
-        <option value="Postazione 2">Postazione 2</option>
-        <option value="Postazione 3">Postazione 3</option>
-        <option value="Postazione 4">Postazione 4</option>
     </select>
     <div class="modal-btns">
       <button class="btn btn-cancel" onclick="closePostazioneModal()">Annulla</button>
-      <button class="btn btn-checkin" onclick="confirmPostazione()">Conferma</button>
+      <button class="btn btn-checkin" id="station-confirm" onclick="confirmPostazione()">Conferma</button>
     </div>
   </div>
 </div>
