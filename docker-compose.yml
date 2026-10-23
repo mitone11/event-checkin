@@ -1,0 +1,34 @@
+services:
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgres://eventcheckin:localdevpassword@db:5432/eventcheckin
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Imposta ADMIN_PASSWORD nel file .env}
+      STATION_PASSWORD: ${STATION_PASSWORD:?Imposta STATION_PASSWORD nel file .env}
+      SESSION_SECRET: ${SESSION_SECRET:?Imposta SESSION_SECRET nel file .env}
+      TG_TOKEN: ${TG_TOKEN:-}
+      TG_CHAT_ID: ${TG_CHAT_ID:-}
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: eventcheckin
+      POSTGRES_PASSWORD: localdevpassword
+      POSTGRES_DB: eventcheckin
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eventcheckin -d eventcheckin"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
