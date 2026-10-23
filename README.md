@@ -5,6 +5,7 @@ Applicativo web per la gestione degli ingressi a un evento. I dati dell'evento s
 ## Requisiti
 
 - Node.js 24 o superiore (`node:sqlite` è integrato in Node.js)
+- Password admin impostata nel file `.env`
 
 ## Installazione e avvio
 
@@ -13,9 +14,19 @@ npm install
 npm start
 ```
 
-Il server parte su http://localhost:3000. Al primo avvio crea `data/checkin.sqlite` e importa automaticamente gli invitati da `invitati.csv` e gli eventuali check-in da `checkins.json`. I due file legacy restano intatti come copia dei dati di partenza; gli avvii successivi usano il database.
+Prima del primo avvio, crea il file locale `.env` copiando `.env.example` e sostituendo i valori segnaposto. Imposta una password admin robusta e un valore casuale lungo per `SESSION_SECRET`; il file `.env` è escluso da Git. In PowerShell:
 
-Il database contiene sia la lista invitati sia i check-in e non viene aggiunto a Git. Per conservarlo, includere `data/checkin.sqlite` nei backup del computer/server che esegue l'applicazione. Per aggiornare la lista dopo l'import iniziale, modificare il database con uno strumento compatibile con SQLite: modificare il CSV non aggiorna automaticamente il database.
+```powershell
+Copy-Item .env.example .env
+```
+
+Il server parte su http://localhost:3000. Il login viene verificato dal server e mantiene una sessione protetta per otto ore. Tutte le API, incluso il check-in, richiedono una sessione valida; il pannello admin consente di aggiungere e rimuovere invitati. Rimuovere un invitato che è già entrato rimuove anche il suo check-in.
+
+Al primo avvio crea `data/checkin.sqlite` e importa automaticamente gli invitati da `invitati.csv` e gli eventuali check-in da `checkins.json`. I due file legacy restano intatti come copia dei dati di partenza; gli avvii successivi usano il database.
+
+Il database contiene sia la lista invitati sia i check-in e non viene aggiunto a Git. Per conservarlo, includere `data/checkin.sqlite` nei backup del computer/server che esegue l'applicazione. Dopo l'import iniziale, gestire la lista dal pannello admin: modificare il CSV non aggiorna automaticamente il database.
+
+L'assistenza Telegram legge `TG_TOKEN` e `TG_CHAT_ID` dal file `.env` e invia le richieste dal server. Il token Telegram usato in precedenza era incorporato nel JavaScript del sito: va revocato e sostituito tramite BotFather prima di usare nuovamente la funzione SOS.
 
 ## Utilizzo con più postazioni in rete
 

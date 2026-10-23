@@ -15,7 +15,7 @@
     <div class="login-icon">🔐</div>
     <h2>MAK P100 Check-In</h2>
     <p>Inserisci la password per accedere</p>
-    <input type="password" id="login-input" placeholder="Password" onkeydown="if(event.key==='Enter') tryLogin()" autofocus>
+    <input type="password" id="login-input" placeholder="Password" onkeydown="if(event.key==='Enter') tryLogin()" autocomplete="current-password" autofocus>
     <div class="login-error" id="login-error"></div>
     <button class="btn btn-checkin" onclick="tryLogin()">Accedi</button>
   </div>
@@ -24,6 +24,8 @@
 <header>
   <h1>&#x2713; MAK P100 <span>Check-In</span></h1>
   <div style="display:flex;gap:10px;align-items:center;">
+    <button class="admin-open-btn" id="admin-open-btn" onclick="openAdminPanel()" hidden>⚙ Admin</button>
+    <button class="logout-btn" id="logout-btn" onclick="logout()" hidden>Esci</button>
     <button class="sos-btn" id="sos-btn" onclick="sendSOS()">🚨 Assistenza urgente</button>
     <div class="postazione-badge" onclick="openPostazioneModal()">
       <span id="postazione-label">Seleziona postazione</span>
@@ -97,6 +99,39 @@
     <ul id="tables-modal-list"></ul>
     <button class="btn btn-checkin" onclick="closeTablesModal()">Chiudi</button>
   </div>
+</div>
+
+<div class="admin-modal-overlay" id="admin-modal" aria-hidden="true">
+  <section class="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-title">
+    <div class="admin-modal-header">
+      <div>
+        <h2 id="admin-title">Pannello admin</h2>
+        <p>Aggiungi invitati o rimuovili dalla lista dell’evento.</p>
+      </div>
+      <button class="admin-close-btn" onclick="closeAdminPanel()" aria-label="Chiudi pannello">✕</button>
+    </div>
+
+    <form id="guest-form" class="admin-form">
+      <label>Nome<input name="nome" required maxlength="100"></label>
+      <label>Cognome<input name="cognome" required maxlength="100"></label>
+      <label>Codice carta d’identità<input name="codice_carta_identita" required maxlength="40"></label>
+      <label>Invitato da<input name="invitante" maxlength="150"></label>
+      <label>Numero tavolo<input name="numero_tavolo" maxlength="100"></label>
+      <button class="btn btn-checkin admin-add-btn" type="submit">Aggiungi invitato</button>
+    </form>
+
+    <div class="admin-list-header">
+      <h3>Invitati (<span id="admin-guest-count">0</span>)</h3>
+      <input id="admin-search" type="search" placeholder="Cerca invitato..." aria-label="Cerca invitato">
+    </div>
+    <div class="admin-guest-list-wrap">
+      <table class="admin-guest-table">
+        <thead><tr><th>Invitato</th><th>Codice CI</th><th>Stato</th><th></th></tr></thead>
+        <tbody id="admin-guest-list"></tbody>
+      </table>
+      <p class="admin-empty" id="admin-empty" hidden>Nessun invitato trovato.</p>
+    </div>
+  </section>
 </div>
 
 

@@ -4,7 +4,7 @@ let filter = 'all';
 let selectedCI = null;
 let selectedInvitante = null;
 let currentPostazione = null;
-
+let isAuthenticated = false;
 
 
 async function loadData() {
@@ -13,6 +13,10 @@ async function loadData() {
       fetch(API + '/api/guests'),
       fetch(API + '/api/stats')
     ]);
+    if (gRes.status === 401 || sRes.status === 401) {
+      setAuthenticated(false);
+      return;
+    }
     guests = await gRes.json();
     const stats = await sRes.json();
     document.getElementById('stat-total').textContent = stats.total;
@@ -20,6 +24,7 @@ async function loadData() {
     document.getElementById('stat-pending').textContent = stats.pending;
     document.getElementById('stat-pct').textContent = stats.total > 0 ? Math.round(stats.entered / stats.total * 100) + '%' : '0%';
     renderList();
+    renderAdminGuests();
     if (selectedCI) renderDetail(selectedCI);
     // FIX: aggiorna la vista gruppo dopo ogni refresh automatico
     if (selectedInvitante && !selectedCI) renderInvitanteDetail(selectedInvitante);
@@ -340,9 +345,6 @@ function showToast(msg, type) {
 }
 
 // ── ASSISTENZA URGENTE (TELEGRAM) ───────────────────────────
-const TG_TOKEN = '8548050959:AAFBCdM5b1E_f00PdzffKhV2z1XM0PVlVsY';
-const TG_CHAT_ID = '1036817997';
-
 async function sendSOS() {
   const btn = document.getElementById('sos-btn');
   const postazione = currentPostazione || 'non selezionata';
@@ -352,13 +354,13 @@ async function sendSOS() {
   btn.textContent = '⏳ Invio...';
 
   try {
-    const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+    const res = await fetch(API + '/api/sos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: TG_CHAT_ID, text: msg })
+      body: JSON.stringify({ postazione })
     });
     const data = await res.json();
-    if (data.ok) {
+    if (res.ok) {
       showToast('🚨 Assistenza allertata via Telegram!', 'success');
       btn.textContent = '✓ Inviato';
       setTimeout(() => {
@@ -366,47 +368,164 @@ async function sendSOS() {
         btn.disabled = false;
       }, 5000);
     } else {
-      throw new Error(data.description || 'Errore Telegram');
+      throw new Error(data.error || 'Errore Telegram');
     }
   } catch(e) {
-    showToast('Errore invio SOS: ' + e.message, 'error');
+    showToast('Errore invio SOS: ' + escapeHtml(e.message), 'error');
     btn.textContent = '🚨 Assistenza urgente';
     btn.disabled = false;
   }
 }
 // ────────────────────────────────────────────────────────────
 
-// ── AUTENTICAZIONE ──────────────────────────────────────────
-// Cambia questa stringa con la password che vuoi usare
-const PASSWORD = 'mak2024';
-const SESSION_KEY = 'mak_auth';
-
-function tryLogin() {
+// ── AUTENTICAZIONE ADMIN ─────────────────────────────────────
+async function tryLogin() {
   const input = document.getElementById('login-input');
   const errorEl = document.getElementById('login-error');
-  if (input.value === PASSWORD) {
-    sessionStorage.setItem(SESSION_KEY, '1');
-    document.getElementById('login-overlay').classList.add('hidden');
+  const button = document.querySelector('#login-overlay .btn-checkin');
+  button.disabled = true;
+  try {
+    const response = await fetch(API + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: input.value })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Accesso non riuscito');
+    errorEl.textContent = '';
+    setAuthenticated(true);
     loadData();
-  } else {
-    errorEl.textContent = 'Password errata. Riprova.';
+  } catch (error) {
+    errorEl.textContent = error.message === 'Failed to fetch' ? 'Errore di connessione al server.' : 'Password errata. Riprova.';
     input.value = '';
     input.classList.add('error');
     input.focus();
     setTimeout(() => input.classList.remove('error'), 400);
+  } finally {
+    button.disabled = false;
   }
 }
 
-function checkAuth() {
-  if (sessionStorage.getItem(SESSION_KEY) === '1') {
-    document.getElementById('login-overlay').classList.add('hidden');
-    return true;
+function setAuthenticated(authenticated) {
+  isAuthenticated = authenticated;
+  document.getElementById('login-overlay').classList.toggle('hidden', authenticated);
+  document.getElementById('admin-open-btn').hidden = !authenticated;
+  document.getElementById('logout-btn').hidden = !authenticated;
+  if (!authenticated) closeAdminPanel();
+}
+
+async function checkAuth() {
+  try {
+    const response = await fetch(API + '/api/auth/session', { cache: 'no-store' });
+    const data = await response.json();
+    setAuthenticated(data.authenticated === true);
+    if (isAuthenticated) loadData();
+  } catch {
+    setAuthenticated(false);
   }
-  return false;
+}
+
+async function logout() {
+  await fetch(API + '/api/auth/logout', { method: 'POST' }).catch(() => {});
+  setAuthenticated(false);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[char]);
+}
+
+function openAdminPanel() {
+  if (!isAuthenticated) return;
+  const modal = document.getElementById('admin-modal');
+  modal.classList.add('show');
+  modal.setAttribute('aria-hidden', 'false');
+  renderAdminGuests();
+  document.getElementById('guest-form').reset();
+}
+
+function closeAdminPanel() {
+  const modal = document.getElementById('admin-modal');
+  if (!modal) return;
+  modal.classList.remove('show');
+  modal.setAttribute('aria-hidden', 'true');
+}
+
+function renderAdminGuests() {
+  const tbody = document.getElementById('admin-guest-list');
+  if (!tbody) return;
+  const query = (document.getElementById('admin-search')?.value || '').trim().toLowerCase();
+  const filtered = guests.filter(guest =>
+    [guest.nome, guest.cognome, guest.codice_carta_identita, guest.invitante, guest.numero_tavolo]
+      .filter(Boolean).join(' ').toLowerCase().includes(query)
+  );
+  document.getElementById('admin-guest-count').textContent = guests.length;
+  document.getElementById('admin-empty').hidden = filtered.length > 0;
+  tbody.innerHTML = filtered.map(guest => `
+    <tr>
+      <td>${escapeHtml(`${guest.nome} ${guest.cognome}`)}</td>
+      <td>${escapeHtml(guest.codice_carta_identita)}</td>
+      <td>${guest.checkin ? 'Entrato' : 'In attesa'}</td>
+      <td><button class="admin-remove-btn" data-remove-code="${escapeHtml(guest.codice_carta_identita)}">Rimuovi</button></td>
+    </tr>
+  `).join('');
+}
+
+async function addGuest(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const guest = Object.fromEntries(new FormData(form).entries());
+  try {
+    const response = await fetch(API + '/api/admin/guests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(guest)
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Impossibile aggiungere l’invitato');
+    form.reset();
+    await loadData();
+    showToast('Invitato aggiunto', 'success');
+  } catch (error) {
+    showToast(escapeHtml(error.message), 'error');
+  }
+}
+
+async function removeGuest(code) {
+  const guest = guests.find(item => item.codice_carta_identita === code);
+  const name = guest ? `${guest.nome} ${guest.cognome}` : code;
+  if (!confirm(`Rimuovere ${name} dalla lista?${guest?.checkin ? '\nIl check-in associato verrà rimosso.' : ''}`)) return;
+  try {
+    const response = await fetch(API + '/api/admin/guests/' + encodeURIComponent(code), { method: 'DELETE' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Impossibile rimuovere l’invitato');
+    if (selectedCI === code) {
+      selectedCI = null;
+      document.getElementById('detail-view').innerHTML = '';
+      document.getElementById('detail-view').style.display = 'none';
+      document.getElementById('empty-state').style.display = '';
+    }
+    await loadData();
+    showToast('Invitato rimosso', 'success');
+  } catch (error) {
+    showToast(escapeHtml(error.message), 'error');
+  }
 }
 // ────────────────────────────────────────────────────────────
 
-setInterval(loadData, 10000);
-if (checkAuth()) {
-  loadData();
-}
+document.getElementById('guest-form').addEventListener('submit', addGuest);
+document.getElementById('admin-search').addEventListener('input', renderAdminGuests);
+document.getElementById('admin-guest-list').addEventListener('click', event => {
+  const button = event.target.closest('[data-remove-code]');
+  if (button) removeGuest(button.dataset.removeCode);
+});
+document.getElementById('admin-modal').addEventListener('click', event => {
+  if (event.target.id === 'admin-modal') closeAdminPanel();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeAdminPanel();
+});
+
+setInterval(() => { if (isAuthenticated) loadData(); }, 10000);
+checkAuth();
