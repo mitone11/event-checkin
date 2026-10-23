@@ -502,6 +502,7 @@ function openAdminPanel() {
   modal.setAttribute('aria-hidden', 'false');
   renderAdminGuests();
   document.getElementById('guest-form').reset();
+  loadBackups();
 }
 
 function closeAdminPanel() {
@@ -529,6 +530,45 @@ function renderAdminGuests() {
       <td><button class="admin-remove-btn" data-remove-code="${escapeHtml(guest.codice_carta_identita)}">Rimuovi</button></td>
     </tr>
   `).join('');
+}
+
+async function loadBackups() {
+  const list = document.getElementById('admin-backup-list');
+  const status = document.getElementById('admin-backup-status');
+  if (!list || !status) return;
+  status.textContent = 'Caricamento backup…';
+  try {
+    const response = await fetch(API + '/api/admin/backups');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Impossibile caricare i backup');
+    list.innerHTML = data.backups.map(backup => `
+      <li>
+        <a href="${API}/api/admin/backups/${encodeURIComponent(backup.name)}">${escapeHtml(new Date(backup.createdAt).toLocaleString())}</a>
+        <span>${(backup.size / 1024).toFixed(1)} KB</span>
+      </li>
+    `).join('');
+    status.textContent = data.backups.length ? '' : 'Nessun backup ancora creato.';
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+async function createBackup() {
+  const button = document.getElementById('create-backup-btn');
+  button.disabled = true;
+  button.textContent = 'Salvataggio…';
+  try {
+    const response = await fetch(API + '/api/admin/backups', { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Impossibile creare il backup');
+    await loadBackups();
+    showToast('Backup salvato in Neon Object Storage', 'success');
+  } catch (error) {
+    showToast(escapeHtml(error.message), 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Crea backup';
+  }
 }
 
 async function addGuest(event) {
@@ -575,6 +615,7 @@ async function removeGuest(code) {
 
 document.getElementById('guest-form').addEventListener('submit', addGuest);
 document.getElementById('admin-search').addEventListener('input', renderAdminGuests);
+document.getElementById('create-backup-btn').addEventListener('click', createBackup);
 document.getElementById('admin-guest-list').addEventListener('click', event => {
   const button = event.target.closest('[data-remove-code]');
   if (button) removeGuest(button.dataset.removeCode);

@@ -417,6 +417,15 @@
   .admin-guest-table tr:last-child td { border-bottom: 0; }
   .admin-remove-btn { background: transparent; border: 1px solid rgba(248,113,113,0.3); border-radius: 7px; color: var(--red); padding: 6px 9px; cursor: pointer; }
   .admin-empty { padding: 1.5rem; text-align: center; color: var(--muted); }
+  .admin-backups { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border); }
+  .admin-backups-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+  .admin-backups-header h3 { font-size: 0.95rem; }
+  .admin-backups-header p, .admin-backup-status { color: var(--muted); font-size: 0.78rem; margin-top: 4px; }
+  .admin-backups-header .btn { white-space: nowrap; }
+  .admin-backup-list { list-style: none; margin-top: 0.5rem; }
+  .admin-backup-list li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.55rem 0; border-bottom: 1px solid var(--border); font-size: 0.8rem; }
+  .admin-backup-list a { color: var(--accent2); text-decoration: none; }
+  .admin-backup-list a:hover { text-decoration: underline; }
   @keyframes shake {
     0%, 100% { transform: translateX(0); }
     25% { transform: translateX(-6px); }
@@ -437,5 +446,6 @@
     .admin-add-btn { width: 100%; }
     .admin-list-header { align-items: stretch; flex-direction: column; }
     .admin-list-header input { max-width: none; }
+    .admin-backups-header { align-items: stretch; flex-direction: column; }
     header { padding: 0.75rem; }
   }

@@ -8,6 +8,10 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?Imposta SESSION_SECRET nel file .env}
       TG_TOKEN: ${TG_TOKEN:-}
       TG_CHAT_ID: ${TG_CHAT_ID:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_ENDPOINT_URL_S3: ${AWS_ENDPOINT_URL_S3:-}
+      AWS_REGION: ${AWS_REGION:-}
     ports:
       - "3000:3000"
     depends_on:

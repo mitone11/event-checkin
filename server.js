@@ -1,10 +1,10 @@
-require('dotenv').config();
-
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+require('dotenv').config({ path: [path.join(__dirname, '.env'), path.join(__dirname, '.env.local')] });
 const { Pool } = require('pg');
+const { S3Client, PutObjectCommand, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { parse } = require('csv-parse/sync');
 
 const app = express();
@@ -20,6 +20,16 @@ const SESSION_COOKIE = 'event_admin_session';
 const SESSION_DURATION_SECONDS = 8 * 60 * 60;
 const STATION_LOCK_SECONDS = 90;
 const STATIONS = ['Postazione 1', 'Postazione 2', 'Postazione 3', 'Postazione 4'];
+const STORAGE_BUCKET = 'assets';
+const storageConfigured = Boolean(
+  process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY &&
+  process.env.AWS_ENDPOINT_URL_S3 && process.env.AWS_REGION
+);
+const storageClient = new S3Client({
+  region: process.env.AWS_REGION,
+  endpoint: process.env.AWS_ENDPOINT_URL_S3,
+  forcePathStyle: true
+});
 
 if (!process.env.DATABASE_URL) throw new Error('Imposta DATABASE_URL con la stringa di connessione PostgreSQL.');
 if (!ADMIN_PASSWORD || !STATION_PASSWORD) {
@@ -30,7 +40,7 @@ if (ADMIN_PASSWORD === STATION_PASSWORD) throw new Error('ADMIN_PASSWORD e STATI
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 5,
-  connectionTimeoutMillis: 10000,
+  connectionTimeoutMillis: 30000,
   idleTimeoutMillis: 30000
 });
 pool.on('error', error => console.error('Errore inatteso nella connessione PostgreSQL:', error.message));
@@ -380,6 +390,71 @@ app.delete('/api/admin/guests/:codice', requireAdmin, async (req, res) => {
   const result = await pool.query('DELETE FROM guests WHERE codice_carta_identita = $1', [req.params.codice]);
   if (!result.rowCount) return res.status(404).json({ error: 'Invitato non trovato' });
   res.json({ success: true });
+});
+
+app.get('/api/admin/backups', requireAdmin, async (req, res) => {
+  if (!storageConfigured) return res.status(503).json({ error: 'Object storage non configurato sul server' });
+  try {
+    const result = await storageClient.send(new ListObjectsV2Command({ Bucket: STORAGE_BUCKET, Prefix: 'backups/' }));
+    const backups = (result.Contents || [])
+      .filter(item => item.Key && /^backups\/event-checkin-[\dTZ-]+-[a-f0-9]{8}\.json$/.test(item.Key))
+      .map(item => ({ name: item.Key.slice('backups/'.length), size: item.Size || 0, createdAt: item.LastModified || null }))
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    res.json({ backups });
+  } catch (error) {
+    console.error('Errore lettura backup object storage:', error.message);
+    res.status(502).json({ error: 'Impossibile leggere i backup da Neon Object Storage' });
+  }
+});
+
+app.post('/api/admin/backups', requireAdmin, async (req, res) => {
+  if (!storageConfigured) return res.status(503).json({ error: 'Object storage non configurato sul server' });
+  try {
+    const [guests, checkins] = await Promise.all([
+      pool.query('SELECT * FROM guests ORDER BY cognome, nome'),
+      pool.query('SELECT * FROM checkins ORDER BY timestamp')
+    ]);
+    const createdAt = new Date().toISOString();
+    const filename = `event-checkin-${createdAt.replace(/[:.]/g, '-')}-${crypto.randomBytes(4).toString('hex')}.json`;
+    const backup = Buffer.from(JSON.stringify({ version: 1, createdAt, guests: guests.rows, checkins: checkins.rows }, null, 2));
+    await storageClient.send(new PutObjectCommand({
+      Bucket: STORAGE_BUCKET,
+      Key: `backups/${filename}`,
+      Body: backup,
+      ContentType: 'application/json'
+    }));
+    res.status(201).json({ success: true, backup: { name: filename, size: backup.length, createdAt } });
+  } catch (error) {
+    console.error('Errore creazione backup object storage:', error.message);
+    res.status(502).json({ error: 'Impossibile salvare il backup su Neon Object Storage' });
+  }
+});
+
+app.get('/api/admin/backups/:name', requireAdmin, async (req, res) => {
+  if (!storageConfigured) return res.status(503).json({ error: 'Object storage non configurato sul server' });
+  const filename = req.params.name;
+  if (!/^event-checkin-[\dTZ-]+-[a-f0-9]{8}\.json$/.test(filename)) {
+    return res.status(400).json({ error: 'Nome backup non valido' });
+  }
+  try {
+    const result = await storageClient.send(new GetObjectCommand({
+      Bucket: STORAGE_BUCKET,
+      Key: `backups/${filename}`
+    }));
+    const bytes = await result.Body.transformToByteArray();
+    res.set({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'private, no-store'
+    });
+    res.send(Buffer.from(bytes));
+  } catch (error) {
+    if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
+      return res.status(404).json({ error: 'Backup non trovato' });
+    }
+    console.error('Errore download backup object storage:', error.message);
+    res.status(502).json({ error: 'Impossibile scaricare il backup da Neon Object Storage' });
+  }
 });
 
 app.post('/api/sos', async (req, res) => {

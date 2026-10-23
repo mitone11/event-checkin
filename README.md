@@ -6,7 +6,7 @@ Applicativo web per la gestione degli ingressi a un evento. Il backend salva inv
 
 Requisiti: Docker Desktop.
 
-1. Copia `.env.example` in `.env` e imposta `ADMIN_PASSWORD`, `STATION_PASSWORD` e `SESSION_SECRET` con valori casuali e distinti. Le credenziali Telegram sono facoltative.
+1. Copia `.env.example` in `.env` e imposta `ADMIN_PASSWORD`, `STATION_PASSWORD` e `SESSION_SECRET` con valori casuali e distinti. Le credenziali Telegram sono facoltative. Se vuoi usare Neon Object Storage in locale con Docker, copia anche in `.env` le variabili `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3` e `AWS_REGION` generate da Neon.
 2. Avvia i container:
 
    ```bash
@@ -22,8 +22,7 @@ Il container applicativo è anche utilizzabile come Docker deployment su Render;
 Il disco del servizio Render Free è temporaneo. Non usare SQLite o file JSON come archivio dei dati di produzione: le modifiche possono sparire quando il servizio viene riavviato o ricreato. Il database Postgres di Render Free ha una durata limitata; usa un provider esterno con piano gratuito, come Neon.
 
 1. Crea un progetto PostgreSQL gratuito su Neon e copia la stringa di connessione (abilita SSL, ad esempio con `sslmode=require`).
-2. In Render apri il servizio web, poi **Environment**, e aggiungi:
-   - `DATABASE_URL`: stringa di connessione copiata da Neon
+2. In Render apri il servizio web, poi **Environment**, e aggiungi le variabili Neon mostrate dal comando `neon env pull` (`DATABASE_URL` e le quattro variabili `AWS_*` per Object Storage):
    - `ADMIN_PASSWORD`: password amministratore
    - `STATION_PASSWORD`: password condivisa dagli operatori, diversa da quella admin
    - `SESSION_SECRET`: stringa casuale lunga
@@ -34,10 +33,13 @@ Se Render fa il deploy con Docker, seleziona il Dockerfile del repository. Se us
 
 Al primo avvio sul nuovo database, il server importa una sola volta invitati da `invitati.csv` e check-in da `checkins.json`. Dopo questa importazione il database diventa la fonte dei dati; le modifiche fatte dal pannello admin non vengono sovrascritte ai riavvii. Se il CSV contiene invitati che avevi già rimosso, eliminali nuovamente dal pannello admin dopo l'import iniziale.
 
+Nel pannello admin è disponibile **Crea backup**: genera un file JSON privato con invitati e check-in nel bucket Neon `assets`. Solo una sessione admin può creare o scaricare i backup. Per usare Neon Object Storage con `npm start`, le credenziali S3 devono essere presenti in `.env` o `.env.local`; il CLI Neon le salva in `.env.local` quando `.env` non esiste.
+
 Per lo sviluppo senza Docker, installa Node.js 24 o superiore, configura `DATABASE_URL` per un PostgreSQL raggiungibile dal computer e avvia:
 
 ```bash
 npm install
+npm run build
 npm start
 ```
 
@@ -57,7 +59,7 @@ Una sessione può prenotare una postazione per volta. Le postazioni occupate non
 
 ## Dati e backup
 
-Il database PostgreSQL contiene la lista invitati, i check-in e le prenotazioni. Fai backup dal provider del database e non committare credenziali o stringhe di connessione. `.env` è escluso da Git; `.env.example` contiene solo valori segnaposto.
+Il database PostgreSQL contiene la lista invitati, i check-in e le prenotazioni. I backup manuali del pannello admin sono salvati nel bucket privato Neon Object Storage. Non committare credenziali o stringhe di connessione: `.env`, `.env.local` e `.neon` sono esclusi da Git; `.env.example` contiene solo valori segnaposto.
 
 Il token Telegram era stato inserito nel JavaScript del sito in passato: revocalo tramite BotFather e configura quello nuovo solo sul server con `TG_TOKEN`.
 
