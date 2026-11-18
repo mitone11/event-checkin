@@ -1,0 +1,37 @@
+{
+  "CA61778XY": {
+    "timestamp": "2026-10-22T10:09:34.902Z",
+    "postazione": "Postazione 2",
+    "nome": "CRISTINA",
+    "cognome": "BALZANI",
+    "numero_tavolo": "46 - Primo Piano"
+  },
+  "CA34115NW": {
+    "timestamp": "2026-10-22T10:09:40.684Z",
+    "postazione": "Postazione 2",
+    "nome": "LORENZO",
+    "cognome": "MITA",
+    "numero_tavolo": "46 - Primo Piano"
+  },
+  "CA88280DC": {
+    "timestamp": "2026-10-22T10:09:54.001Z",
+    "postazione": "Postazione 2",
+    "nome": "FULVIO",
+    "cognome": "PRATA",
+    "numero_tavolo": "46 - Primo Piano"
+  },
+  "CA14312IP": {
+    "timestamp": "2026-10-22T10:09:54.033Z",
+    "postazione": "Postazione 2",
+    "nome": "PATRIZIA",
+    "cognome": "MANFRIDI",
+    "numero_tavolo": "46 - Primo Piano"
+  },
+  "CA47604VK": {
+    "timestamp": "2026-10-22T10:09:54.061Z",
+    "postazione": "Postazione 2",
+    "nome": "ALESSIA",
+    "cognome": "PRATA",
+    "numero_tavolo": "46 - Primo Piano"
+  }
+}

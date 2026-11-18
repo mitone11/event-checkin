@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MAK P100 Check-In</title>
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<!-- LOGIN OVERLAY -->
+<div class="login-overlay" id="login-overlay">
+  <div class="login-box">
+    <div class="login-icon">🔐</div>
+    <h2>MAK P100 Check-In</h2>
+    <p>Accedi come amministratore o come postazione</p>
+    <input type="password" id="login-input" placeholder="Password" onkeydown="if(event.key==='Enter') tryLogin()" autocomplete="current-password" autofocus>
+    <div class="login-error" id="login-error"></div>
+    <button class="btn btn-checkin" onclick="tryLogin()">Accedi</button>
+  </div>
+</div>
+
+<header>
+  <h1>&#x2713; MAK P100 <span>Check-In</span></h1>
+  <div style="display:flex;gap:10px;align-items:center;">
+    <button class="admin-open-btn" id="admin-open-btn" onclick="openAdminPanel()" hidden>⚙ Admin</button>
+    <button class="logout-btn" id="logout-btn" onclick="logout()" hidden>Esci</button>
+    <button class="sos-btn" id="sos-btn" onclick="sendSOS()">🚨 Assistenza urgente</button>
+    <div class="postazione-badge" onclick="openPostazioneModal()">
+      <span id="postazione-label">Seleziona postazione</span>
+    </div>
+  </div>
+</header>
+
+<div class="stats-bar">
+  <div class="stat">
+    <div class="stat-num" id="stat-total">–</div>
+    <div class="stat-label">Totale invitati</div>
+  </div>
+  <div class="stat green">
+    <div class="stat-num" id="stat-entered">–</div>
+    <div class="stat-label">Entrati</div>
+  </div>
+  <div class="stat amber">
+    <div class="stat-num" id="stat-pending">–</div>
+    <div class="stat-label">In attesa</div>
+  </div>
+  <div class="stat accent">
+    <div class="stat-num" id="stat-pct">–</div>
+    <div class="stat-label">Completamento</div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="panel-left">
+    <div class="search-box">
+      <input type="text" id="search" placeholder="Cerca per nome, cognome, CI o invitante..." oninput="renderList()">
+    </div>
+    <div class="filter-tabs">
+      <div class="filter-tab active" onclick="setFilter('all', this)">Tutti</div>
+      <div class="filter-tab" onclick="setFilter('pending', this)">In attesa</div>
+      <div class="filter-tab" onclick="setFilter('done', this)">Entrati</div>
+      <div class="filter-tab" onclick="setFilter('group', this)">Per invitante</div>
+    </div>
+    <div class="guest-list" id="guest-list"></div>
+  </div>
+
+  <div class="panel-right" id="panel-right">
+    <div class="empty-state" id="empty-state">
+      <div class="icon">&#x1F464;</div>
+      <p>Seleziona un invitato dalla lista</p>
+    </div>
+    <div id="detail-view" style="display:none"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal-overlay" id="postazione-modal">
+  <div class="modal">
+    <h3>Seleziona postazione</h3>
+    <select id="postazione-select">
+    </select>
+    <div class="modal-btns">
+      <button class="btn btn-cancel" onclick="closePostazioneModal()">Annulla</button>
+      <button class="btn btn-checkin" id="station-confirm" onclick="confirmPostazione()">Conferma</button>
+    </div>
+  </div>
+</div>
+
+<div class="tables-modal-overlay" id="tables-modal">
+  <div class="tables-modal">
+    <h3>🪑 Tavoli invitati registrati</h3>
+    <ul id="tables-modal-list"></ul>
+    <button class="btn btn-checkin" onclick="closeTablesModal()">Chiudi</button>
+  </div>
+</div>
+
+<div class="admin-modal-overlay" id="admin-modal" aria-hidden="true">
+  <section class="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-title">
+    <div class="admin-modal-header">
+      <div>
+        <h2 id="admin-title">Pannello admin</h2>
+        <p>Aggiungi invitati o rimuovili dalla lista dell’evento.</p>
+      </div>
+      <button class="admin-close-btn" onclick="closeAdminPanel()" aria-label="Chiudi pannello">✕</button>
+    </div>
+
+    <form id="guest-form" class="admin-form">
+      <label>Nome<input name="nome" required maxlength="100"></label>
+      <label>Cognome<input name="cognome" required maxlength="100"></label>
+      <label>Codice carta d’identità<input name="codice_carta_identita" required maxlength="40"></label>
+      <label>Invitato da<input name="invitante" maxlength="150"></label>
+      <label>Numero tavolo<input name="numero_tavolo" maxlength="100"></label>
+      <button class="btn btn-checkin admin-add-btn" type="submit">Aggiungi invitato</button>
+    </form>
+
+    <div class="admin-list-header">
+      <h3>Invitati (<span id="admin-guest-count">0</span>)</h3>
+      <input id="admin-search" type="search" placeholder="Cerca invitato..." aria-label="Cerca invitato">
+    </div>
+    <div class="admin-guest-list-wrap">
+      <table class="admin-guest-table">
+        <thead><tr><th>Invitato</th><th>Codice CI</th><th>Stato</th><th></th></tr></thead>
+        <tbody id="admin-guest-list"></tbody>
+      </table>
+      <p class="admin-empty" id="admin-empty" hidden>Nessun invitato trovato.</p>
+    </div>
+
+    <section class="admin-backups" aria-labelledby="admin-backups-title">
+      <div class="admin-backups-header">
+        <div>
+          <h3 id="admin-backups-title">Backup cloud</h3>
+          <p>I backup contengono i dati degli invitati e dei check-in.</p>
+        </div>
+        <button class="btn btn-checkin" id="create-backup-btn" type="button">Crea backup</button>
+      </div>
+      <p class="admin-backup-status" id="admin-backup-status" role="status"></p>
+      <ul class="admin-backup-list" id="admin-backup-list"></ul>
+    </section>
+  </section>
+</div>
+
+
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
+</html>
